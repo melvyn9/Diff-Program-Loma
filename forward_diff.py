@@ -74,13 +74,16 @@ def forward_diff(diff_func_id : str,
 
         def mutate_return(self, node):
             # HW1: TODO
-            # First, mutate the expression being returned.
+            # First, mutate the return expression into a two-tuple (primal, derivative)
             val, dval = self.mutate_expr(node.val)
-            # Pack the dual components into a _dfloat using make__dfloat.
-            new_expr = loma_ir.Call('make__dfloat', [val, dval],
-                                    lineno=node.lineno)
-            # Return a Return node with the properly packed _dfloat.
-            return loma_ir.Return(new_expr, lineno=node.lineno)
+            # Check the type of the return expression using node.val.t.
+            if isinstance(node.val.t, loma_ir.Float):
+                # For floats, pack into a _dfloat.
+                new_expr = loma_ir.Call('make__dfloat', [val, dval], lineno=node.lineno)
+                return loma_ir.Return(new_expr, lineno=node.lineno)
+            else:
+                # For int (or other non-differentiable types), return only the primal value.
+                return loma_ir.Return(val, lineno=node.lineno)
             # return super().mutate_return(node)
 
         def mutate_declare(self, node):
@@ -155,19 +158,42 @@ def forward_diff(diff_func_id : str,
 
         def mutate_const_int(self, node):
             # HW1: TODO
-            return super().mutate_const_int(node)
+            return (node, loma_ir.ConstFloat(0.0))
+            # return super().mutate_const_int(node)
 
         def mutate_var(self, node):
             # HW1: TODO
-            return (
-                loma_ir.StructAccess(node, 'val', lineno=node.lineno, t=node.t),
-                loma_ir.StructAccess(node, 'dval', lineno=node.lineno, t=node.t)
-            )
+            # If the variable is of a differentiable type (Float), extract its dual components.
+            if isinstance(node.t, loma_ir.Float):
+                return (
+                    loma_ir.StructAccess(node, 'val', lineno=node.lineno, t=node.t),
+                    loma_ir.StructAccess(node, 'dval', lineno=node.lineno, t=node.t)
+                )
+            else:
+                # For non-differentiable types (e.g. Int), just return the variable as-is
+                # and use a constant zero for the derivative.
+                return (node, loma_ir.ConstFloat(0.0))
             # return super().mutate_var(node)
 
         def mutate_array_access(self, node):
             # HW1: TODO
-            return super().mutate_array_access(node)
+            array, _ = self.mutate_expr(node.array)
+            index, _ = self.mutate_expr(node.index)
+            if isinstance(node.t, loma_ir.Float):
+                val = loma_ir.StructAccess(loma_ir.ArrayAccess(\
+                    array, index), 'val',
+                    lineno = node.lineno,
+                    t = node.t)
+                dval = loma_ir.StructAccess(loma_ir.ArrayAccess(\
+                    array, index), 'dval',
+                    lineno = node.lineno,
+                    t = node.t)
+                return val, dval
+            else:
+                return loma_ir.ArrayAccess(\
+                    array, index, lineno = node.lineno, t = node.t), None
+
+            # return super().mutate_array_access(node)
 
         def mutate_struct_access(self, node):
             # HW1: TODO
