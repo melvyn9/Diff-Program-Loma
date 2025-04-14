@@ -51,43 +51,93 @@ def forward_diff(diff_func_id : str,
         def mutate_function_def(self, node):
             # HW1: TODO
             # From lecture
-            new_args = [loma_ir.Arg(\
+            new_args = [loma_ir.Arg(
                 arg.id,
                 autodiff.type_to_diff_type(diff_structs, arg.t),
                 arg.i) for arg in node.args]
-            new_node = loma_ir.FunctionDef(\
+
+            new_body = []
+            for stmt in node.body:
+                mutated = self.mutate_stmt(stmt)
+                if isinstance(mutated, list):
+                    new_body.extend(mutated)  # Flatten lists of statements
+                else:
+                    new_body.append(mutated)
+
+            new_node = loma_ir.FunctionDef(
                 diff_func_id,
                 new_args,
-                [self.mutate_stmt(stmt) for stmt in node.body],
+                new_body,
                 node.is_simd,
                 autodiff.type_to_diff_type(diff_structs, node.ret_type))
             return new_node
-            # return super().mutate_function_def(node)
 
         def mutate_return(self, node):
             # HW1: TODO
-            return super().mutate_return(node)
+            # First, mutate the expression being returned.
+            val, dval = self.mutate_expr(node.val)
+            # Pack the dual components into a _dfloat using make__dfloat.
+            new_expr = loma_ir.Call('make__dfloat', [val, dval],
+                                    lineno=node.lineno)
+            # Return a Return node with the properly packed _dfloat.
+            return loma_ir.Return(new_expr, lineno=node.lineno)
+            # return super().mutate_return(node)
 
         def mutate_declare(self, node):
             # HW1: TODO
-            # Use type_to_diff_type to get dfloat version and call mutate_expr to get new expressions
+            # Convert the declared type to its differential counterpart (e.g., float -> _dfloat)
             diff_type = autodiff.type_to_diff_type(diff_structs, node.t)
+            # Create the declaration without initialization
+            declare_stmt = loma_ir.Declare(node.target, diff_type, lineno=node.lineno)
 
-            # If uninitialized then just return it self
+            # If there is no initializer, just return the declaration
             if node.val is None:
-                return loma_ir.Declare(node.target, diff_type)
+                return declare_stmt
 
-            # then just make the Declare node with the new values
-            new_expr = self.mutate_expr(node.val)
-            return loma_ir.Declare(node.target, diff_type, new_expr)
-            # return super().mutate_declare(node)
+            # Mutate the initializer expression
+            rhs_val, rhs_dval = self.mutate_expr(node.val)
+
+            # Check if this is a float type (requires dual value assignment)
+            is_float = isinstance(node.t, loma_ir.Float)
+
+            if is_float:
+                # Assign to target.val and target.dval
+                assign_val = loma_ir.Assign(
+                    loma_ir.StructAccess(loma_ir.Var(node.target), 'val', lineno=node.lineno),
+                    rhs_val,
+                    lineno=node.lineno
+                )
+                assign_dval = loma_ir.Assign(
+                    loma_ir.StructAccess(loma_ir.Var(node.target), 'dval', lineno=node.lineno),
+                    rhs_dval,
+                    lineno=node.lineno
+                )
+                return [declare_stmt, assign_val, assign_dval]
+            else:
+                # For non-float types, only assign the primal value
+                assign = loma_ir.Assign(
+                    loma_ir.Var(node.target),
+                    rhs_val,
+                    lineno=node.lineno
+                )
+                return [declare_stmt, assign]
 
         def mutate_assign(self, node):
             # HW1: TODO
-            # Call mutate_expr to transform into dfloat then just make the Assign node with new values
-            new_expr = self.mutate_expr(node.val)
-            return loma_ir.Assign(node.target, new_expr)
-            # return super().mutate_assign(node)
+            rhs_val, rhs_dval = self.mutate_expr(node.val)
+            lhs_val, lhs_dval = self.mutate_expr(node.target)
+
+            # Check if the RHS is a float
+            is_float = isinstance(node.val.t, loma_ir.Float)
+
+            if is_float:
+                # Assign both val and dval for dual number
+                assign_val = loma_ir.Assign(lhs_val, rhs_val)
+                assign_dval = loma_ir.Assign(lhs_dval, rhs_dval)
+                return [assign_val, assign_dval]
+            # Not a float so just assign the primal
+            else:
+                return loma_ir.Assign(lhs_val, rhs_val)
 
         def mutate_ifelse(self, node):
             # HW3: TODO
@@ -100,8 +150,7 @@ def forward_diff(diff_func_id : str,
         def mutate_const_float(self, node):
             # HW1: TODO
             # From lecture
-            return loma_ir.Call('make__dfloat',
-                                [node, loma_ir.ConstFloat(0.0)])
+            return (node, loma_ir.ConstFloat(0.0))
             # return super().mutate_const_float(node)
 
         def mutate_const_int(self, node):
@@ -110,7 +159,11 @@ def forward_diff(diff_func_id : str,
 
         def mutate_var(self, node):
             # HW1: TODO
-            return super().mutate_var(node)
+            return (
+                loma_ir.StructAccess(node, 'val', lineno=node.lineno, t=node.t),
+                loma_ir.StructAccess(node, 'dval', lineno=node.lineno, t=node.t)
+            )
+            # return super().mutate_var(node)
 
         def mutate_array_access(self, node):
             # HW1: TODO
@@ -123,72 +176,188 @@ def forward_diff(diff_func_id : str,
         def mutate_add(self, node):
             # HW1: TODO
             # From lecture
-            left = self.mutate_expr(node.left)
-            right = self.mutate_expr(node.right)
-            left_val = loma_ir.StructAccess(left, 'val')
-            right_val = loma_ir.StructAccess(right, 'val')
-            left_dval = loma_ir.StructAccess(left, 'dval')
-            right_dval = loma_ir.StructAccess(right, 'dval')
-            return loma_ir.Call('make__dfloat', 
-                                [loma_ir.BinaryOp(loma_ir.Add(), left_val, right_val), 
-                                 loma_ir.BinaryOp(loma_ir.Add(), left_dval, right_dval)])
+            # Unpack the left and right subexpressions
+            left_val, left_dval = self.mutate_expr(node.left)
+            right_val, right_dval = self.mutate_expr(node.right)
+
+            # Compute the primal and tangent parts
+            new_val = loma_ir.BinaryOp(loma_ir.Add(), left_val, right_val,
+                                    lineno=node.lineno, t=node.t)
+            new_dval = loma_ir.BinaryOp(loma_ir.Add(), left_dval, right_dval,
+                                        lineno=node.lineno, t=node.t)
+
+            # Return a tuple
+            return (new_val, new_dval)
             # return super().mutate_add(node)
 
         def mutate_sub(self, node):
             # HW1: TODO
             # Basically the same as add but with Sub()
-            left = self.mutate_expr(node.left)
-            right = self.mutate_expr(node.right)
-            left_val = loma_ir.StructAccess(left, 'val')
-            right_val = loma_ir.StructAccess(right, 'val')
-            left_dval = loma_ir.StructAccess(left, 'dval')
-            right_dval = loma_ir.StructAccess(right, 'dval')
-            return loma_ir.Call('make__dfloat', 
-                                [loma_ir.BinaryOp(loma_ir.Sub(), left_val, right_val), 
-                                 loma_ir.BinaryOp(loma_ir.Sub(), left_dval, right_dval)])
+            left_val, left_dval = self.mutate_expr(node.left)
+            right_val, right_dval = self.mutate_expr(node.right)
+
+            new_val = loma_ir.BinaryOp(loma_ir.Sub(), left_val, right_val,
+                                    lineno=node.lineno, t=node.t)
+            new_dval = loma_ir.BinaryOp(loma_ir.Sub(), left_dval, right_dval,
+                                        lineno=node.lineno, t=node.t)
+
+            return (new_val, new_dval)
             # return super().mutate_sub(node)
 
         def mutate_mul(self, node):
             # HW1: TODO
             # Basically the same as add but with Mul()
-            left = self.mutate_expr(node.left)
-            right = self.mutate_expr(node.right)
-            left_val = loma_ir.StructAccess(left, 'val')
-            right_val = loma_ir.StructAccess(right, 'val')
-            left_dval = loma_ir.StructAccess(left, 'dval')
-            right_dval = loma_ir.StructAccess(right, 'dval')
-            return loma_ir.Call('make__dfloat', 
-                                # x*y
-                                [loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_val),
-                                 # x*dy + y*dx 
-                                 loma_ir.BinaryOp(loma_ir.Add(), 
-                                                  loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval),
-                                                  loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval))])
+            left_val, left_dval = self.mutate_expr(node.left)
+            right_val, right_dval = self.mutate_expr(node.right)
+
+            new_val = loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_val,
+                                    lineno=node.lineno, t=node.t)
+            # Product rule: left_val * right_dval + right_val * left_dval
+            term1 = loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval,
+                                    lineno=node.lineno, t=node.t)
+            term2 = loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval,
+                                    lineno=node.lineno, t=node.t)
+            new_dval = loma_ir.BinaryOp(loma_ir.Add(), term1, term2,
+                                        lineno=node.lineno, t=node.t)
+
+            return (new_val, new_dval)
             # return super().mutate_mul(node)
 
         def mutate_div(self, node):
             # HW1: TODO
             # Basically the same as add but with Div()
-            left = self.mutate_expr(node.left)
-            right = self.mutate_expr(node.right)
-            left_val = loma_ir.StructAccess(left, 'val')
-            right_val = loma_ir.StructAccess(right, 'val')
-            left_dval = loma_ir.StructAccess(left, 'dval')
-            right_dval = loma_ir.StructAccess(right, 'dval')
-            return loma_ir.Call('make__dfloat', 
-                                # x/y
-                                [loma_ir.BinaryOp(loma_ir.Div(), left_val, right_val),
-                                 # (y*dx - x*dy ) / y*y
-                                 loma_ir.BinaryOp(loma_ir.Div(), 
-                                                  # y*dx - x*dy
-                                                  loma_ir.BinaryOp(loma_ir.Sub(), 
-                                                                   loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval), 
-                                                                   loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval)),
-                                                  loma_ir.BinaryOp(loma_ir.Mul(), right_val, right_val))])
+            left_val, left_dval = self.mutate_expr(node.left)
+            right_val, right_dval = self.mutate_expr(node.right)
+
+            new_val = loma_ir.BinaryOp(loma_ir.Div(), left_val, right_val,
+                                    lineno=node.lineno, t=node.t)
+            # Quotient rule: (right_val * left_dval - left_val * right_dval) / (right_val * right_val)
+            numerator_left = loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval,
+                                            lineno=node.lineno, t=node.t)
+            numerator_right = loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval,
+                                            lineno=node.lineno, t=node.t)
+            numerator = loma_ir.BinaryOp(loma_ir.Sub(), numerator_left, numerator_right,
+                                        lineno=node.lineno, t=node.t)
+            denominator = loma_ir.BinaryOp(loma_ir.Mul(), right_val, right_val,
+                                        lineno=node.lineno, t=node.t)
+            new_dval = loma_ir.BinaryOp(loma_ir.Div(), numerator, denominator,
+                                        lineno=node.lineno, t=node.t)
+            return (new_val, new_dval)
             # return super().mutate_div(node)
 
         def mutate_call(self, node):
             # HW1: TODO
-            return super().mutate_call(node)
+            # Grab the arguments
+            new_args = [self.mutate_expr(arg) for arg in node.args]
+            if node.id == 'sin':
+                # Expect one argument; new_args[0] is a tuple (val, dval)
+                val, dval = new_args[0]
+                primal = loma_ir.Call('sin', [val], lineno=node.lineno, t=node.t)
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Mul(),
+                    loma_ir.Call('cos', [val], lineno=node.lineno, t=node.t),
+                    dval,
+                    lineno=node.lineno,
+                    t=node.t
+                )
+                return (primal, tangent)
+                    
+            elif node.id == 'cos':
+                # cos(x): derivative = -sin(x) * x.dval
+                val, dval = new_args[0]
+                primal = loma_ir.Call('cos', [val], lineno=node.lineno, t=node.t)
+                neg_sin = loma_ir.BinaryOp(
+                    loma_ir.Sub(),
+                    loma_ir.ConstFloat(0.0),
+                    loma_ir.Call('sin', [val], lineno=node.lineno, t=node.t),
+                    lineno=node.lineno, t=node.t
+                )
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Mul(), neg_sin, dval, lineno=node.lineno, t=node.t
+                )
+                return (primal, tangent)
+
+            elif node.id == 'sqrt':
+                # sqrt(x): derivative = x.dval / (2 * sqrt(x))
+                val, dval = new_args[0]
+                primal = loma_ir.Call('sqrt', [val], lineno=node.lineno, t=node.t)
+                two = loma_ir.ConstFloat(2.0)
+                two_sqrt = loma_ir.BinaryOp(
+                    loma_ir.Mul(), two, primal, lineno=node.lineno, t=node.t
+                )
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Div(), dval, two_sqrt, lineno=node.lineno, t=node.t
+                )
+                return (primal, tangent)
+
+            elif node.id == 'pow':
+                # pow(x, y): derivative =
+                #   dx_term: x.dval * (y * x^(y-1))
+                #   dy_term: y.dval * (x^y * log(x))
+                # Total: dx_term + dy_term.
+                base_val, base_dval = new_args[0]
+                exp_val, exp_dval = new_args[1]
+                primal = loma_ir.Call('pow', [base_val, exp_val],
+                                    lineno=node.lineno, t=node.t)
+                one = loma_ir.ConstFloat(1.0)
+                exp_minus_1 = loma_ir.BinaryOp(
+                    loma_ir.Sub(), exp_val, one, lineno=node.lineno, t=node.t
+                )
+                base_pow_exp_minus1 = loma_ir.Call('pow', [base_val, exp_minus_1],
+                                                lineno=node.lineno, t=node.t)
+                dx_term = loma_ir.BinaryOp(
+                    loma_ir.Mul(), base_dval,
+                    loma_ir.BinaryOp(
+                        loma_ir.Mul(), exp_val, base_pow_exp_minus1,
+                        lineno=node.lineno, t=node.t
+                    ),
+                    lineno=node.lineno, t=node.t
+                )
+                log_base = loma_ir.Call('log', [base_val], lineno=node.lineno, t=node.t)
+                dy_term = loma_ir.BinaryOp(
+                    loma_ir.Mul(), exp_dval,
+                    loma_ir.BinaryOp(
+                        loma_ir.Mul(), primal, log_base,
+                        lineno=node.lineno, t=node.t
+                    ),
+                    lineno=node.lineno, t=node.t
+                )
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Add(), dx_term, dy_term, lineno=node.lineno, t=node.t
+                )
+                return (primal, tangent)
+
+            elif node.id == 'exp':
+                # exp(x): derivative = exp(x) * x.dval
+                val, dval = new_args[0]
+                primal = loma_ir.Call('exp', [val], lineno=node.lineno, t=node.t)
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Mul(), dval, primal, lineno=node.lineno, t=node.t
+                )
+                return (primal, tangent)
+
+            elif node.id == 'log':
+                # log(x): derivative = x.dval / x
+                val, dval = new_args[0]
+                primal = loma_ir.Call('log', [val], lineno=node.lineno, t=node.t)
+                tangent = loma_ir.BinaryOp(
+                    loma_ir.Div(), dval, val, lineno=node.lineno, t=node.t
+                )
+                return (primal, tangent)
+
+            elif node.id == 'int2float':
+                # int2float(x): derivative is 0.
+                val, _ = new_args[0]
+                primal = loma_ir.Call('int2float', [val], lineno=node.lineno, t=node.t)
+                tangent = loma_ir.ConstFloat(0.0)
+                return (primal, tangent)
+
+            elif node.id == 'float2int':
+                # float2int(x): typically derivative is ignored. We return derivative 0.
+                val, dval = new_args[0]
+                primal = loma_ir.Call('float2int', [val], lineno=node.lineno, t=node.t)
+                tangent = loma_ir.ConstFloat(0.0)
+                return (primal, tangent)
+                    # return super().mutate_call(node)
 
     return FwdDiffMutator().mutate_function_def(func)
