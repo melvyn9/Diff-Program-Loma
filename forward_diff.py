@@ -123,15 +123,56 @@ def forward_diff(diff_func_id : str,
 
         def mutate_sub(self, node):
             # HW1: TODO
-            return super().mutate_sub(node)
+            # Basically the same as add but with Sub()
+            left = self.mutate_expr(node.left)
+            right = self.mutate_expr(node.right)
+            left_val = loma_ir.StructAccess(left, 'val')
+            right_val = loma_ir.StructAccess(right, 'val')
+            left_dval = loma_ir.StructAccess(left, 'dval')
+            right_dval = loma_ir.StructAccess(right, 'dval')
+            return loma_ir.Call('make__dfloat', 
+                                [loma_ir.BinaryOp(loma_ir.Sub(), left_val, right_val), 
+                                 loma_ir.BinaryOp(loma_ir.Sub(), left_dval, right_dval)])
+            # return super().mutate_sub(node)
 
         def mutate_mul(self, node):
             # HW1: TODO
-            return super().mutate_mul(node)
+            # Basically the same as add but with Mul()
+            left = self.mutate_expr(node.left)
+            right = self.mutate_expr(node.right)
+            left_val = loma_ir.StructAccess(left, 'val')
+            right_val = loma_ir.StructAccess(right, 'val')
+            left_dval = loma_ir.StructAccess(left, 'dval')
+            right_dval = loma_ir.StructAccess(right, 'dval')
+            return loma_ir.Call('make__dfloat', 
+                                # x*y
+                                [loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_val),
+                                 # x*dy + y*dx 
+                                 loma_ir.BinaryOp(loma_ir.Add(), 
+                                                  loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval),
+                                                  loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval))])
+            # return super().mutate_mul(node)
 
         def mutate_div(self, node):
             # HW1: TODO
-            return super().mutate_div(node)
+            # Basically the same as add but with Div()
+            left = self.mutate_expr(node.left)
+            right = self.mutate_expr(node.right)
+            left_val = loma_ir.StructAccess(left, 'val')
+            right_val = loma_ir.StructAccess(right, 'val')
+            left_dval = loma_ir.StructAccess(left, 'dval')
+            right_dval = loma_ir.StructAccess(right, 'dval')
+            return loma_ir.Call('make__dfloat', 
+                                # x/y
+                                [loma_ir.BinaryOp(loma_ir.Div(), left_val, right_val),
+                                 # (y*dx - x*dy ) / y*y
+                                 loma_ir.BinaryOp(loma_ir.Div(), 
+                                                  # y*dx - x*dy
+                                                  loma_ir.BinaryOp(loma_ir.Sub(), 
+                                                                   loma_ir.BinaryOp(loma_ir.Mul(), right_val, left_dval), 
+                                                                   loma_ir.BinaryOp(loma_ir.Mul(), left_val, right_dval)),
+                                                  loma_ir.BinaryOp(loma_ir.Mul(), right_val, right_val))])
+            # return super().mutate_div(node)
 
         def mutate_call(self, node):
             # HW1: TODO
