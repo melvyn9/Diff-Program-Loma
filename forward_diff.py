@@ -50,7 +50,19 @@ def forward_diff(diff_func_id : str,
     class FwdDiffMutator(irmutator.IRMutator):
         def mutate_function_def(self, node):
             # HW1: TODO
-            return super().mutate_function_def(node)
+            # From lecture
+            new_args = [loma_ir.Arg(\
+                arg.id,
+                autodiff.type_to_diff_type(diff_structs, arg.t),
+                arg.i) for arg in node.args]
+            new_node = loma_ir.FunctionDef(\
+                diff_func_id,
+                new_args,
+                [self.mutate_stmt(stmt) for stmt in node.body],
+                node.is_simd,
+                autodiff.type_to_diff_type(diff_structs, node.ret_type))
+            return new_node
+            # return super().mutate_function_def(node)
 
         def mutate_return(self, node):
             # HW1: TODO
@@ -74,7 +86,10 @@ def forward_diff(diff_func_id : str,
 
         def mutate_const_float(self, node):
             # HW1: TODO
-            return super().mutate_const_float(node)
+            # From lecture
+            return loma_ir.Call('make__dfloat',
+                                [node, loma_ir.ConstFloat(0.0)])
+            # return super().mutate_const_float(node)
 
         def mutate_const_int(self, node):
             # HW1: TODO
@@ -94,7 +109,17 @@ def forward_diff(diff_func_id : str,
 
         def mutate_add(self, node):
             # HW1: TODO
-            return super().mutate_add(node)
+            # From lecture
+            left = self.mutate_expr(node.left)
+            right = self.mutate_expr(node.right)
+            left_val = loma_ir.StructAccess(left, 'val')
+            right_val = loma_ir.StructAccess(right, 'val')
+            left_dval = loma_ir.StructAccess(left, 'dval')
+            right_dval = loma_ir.StructAccess(right, 'dval')
+            return loma_ir.Call('make__dfloat', 
+                                [loma_ir.BinaryOp(loma_ir.Add(), left_val, right_val), 
+                                 loma_ir.BinaryOp(loma_ir.Add(), left_dval, right_dval)])
+            # return super().mutate_add(node)
 
         def mutate_sub(self, node):
             # HW1: TODO
