@@ -70,11 +70,24 @@ def forward_diff(diff_func_id : str,
 
         def mutate_declare(self, node):
             # HW1: TODO
-            return super().mutate_declare(node)
+            # Use type_to_diff_type to get dfloat version and call mutate_expr to get new expressions
+            diff_type = autodiff.type_to_diff_type(diff_structs, node.t)
+
+            # If uninitialized then just return it self
+            if node.val is None:
+                return loma_ir.Declare(node.target, diff_type)
+
+            # then just make the Declare node with the new values
+            new_expr = self.mutate_expr(node.val)
+            return loma_ir.Declare(node.target, diff_type, new_expr)
+            # return super().mutate_declare(node)
 
         def mutate_assign(self, node):
             # HW1: TODO
-            return super().mutate_assign(node)
+            # Call mutate_expr to transform into dfloat then just make the Assign node with new values
+            new_expr = self.mutate_expr(node.val)
+            return loma_ir.Assign(node.target, new_expr)
+            # return super().mutate_assign(node)
 
         def mutate_ifelse(self, node):
             # HW3: TODO

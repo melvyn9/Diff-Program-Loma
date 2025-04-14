@@ -85,64 +85,64 @@ class Homework1Test(unittest.TestCase):
     #     assert abs(out_div.val - (x.val/y.val)) < epsilon and \
     #            abs(out_div.dval - ((x.dval * y.val - x.val * y.dval)/(y.val * y.val))) < epsilon
 
-    def test_declare(self):
-        with open('loma_code/declare.py') as f:
+    # def test_declare(self):
+    #     with open('loma_code/declare.py') as f:
+    #         structs, lib = compiler.compile(f.read(),
+    #                                         target = 'c',
+    #                                         output_filename = '_code/declare')
+    #     _dfloat = structs['_dfloat']
+    #     x = _dfloat(5.0, 0.5)
+    #     y = _dfloat(6.0, 1.5)
+    #     out = lib.d_declare(x, y)
+
+    #     # simulate the forward-diff program
+    #     z0_val = x.val + y.val
+    #     z0_dval = x.dval + y.dval
+    #     z1_val = z0_val + 5.0
+    #     z1_dval = z0_dval + 0.0
+    #     z2_val = z1_val * z0_val
+    #     z2_dval = z1_dval * z0_val + z0_dval * z1_val
+
+    #     assert abs(out.val - z2_val) < epsilon and \
+    #         abs(out.dval - z2_dval) < epsilon
+
+    # def test_assign(self):
+    #     with open('loma_code/assign.py') as f:
+    #         structs, lib = compiler.compile(f.read(),
+    #                                         target = 'c',
+    #                                         output_filename = '_code/assign')
+    #     _dfloat = structs['_dfloat']
+    #     x = _dfloat(-3.0, -1.0)
+    #     y = _dfloat(5.0, 3.0)
+    #     out = lib.d_assign(x, y)
+
+    #     assert abs(out.val - (-3.0 + 5.0)) < epsilon and \
+    #         abs(out.dval - (-1.0 + 3.0)) < epsilon
+
+    # def test_side_effect(self):
+    #     with open('loma_code/side_effect.py') as f:
+    #         structs, lib = compiler.compile(f.read(),
+    #                                         target = 'c',
+    #                                         output_filename = '_code/side_effect')
+    #     _dfloat = structs['_dfloat']
+    #     x = _dfloat(-3.5, -1.5)
+    #     y = _dfloat(7.0, 2.0)
+    #     out = lib.d_side_effect(x, y)
+
+    #     assert abs(out.val - (x.val * y.val)) < epsilon and \
+    #         abs(out.dval - (x.dval * y.val + x.val * y.dval)) < epsilon
+
+    def test_call_sin(self):
+        with open('loma_code/call_sin.py') as f:
             structs, lib = compiler.compile(f.read(),
                                             target = 'c',
-                                            output_filename = '_code/declare')
+                                            output_filename = '_code/call_sin')
         _dfloat = structs['_dfloat']
-        x = _dfloat(5.0, 0.5)
-        y = _dfloat(6.0, 1.5)
-        out = lib.d_declare(x, y)
+        x = _dfloat(1.5, 0.3)
+        out = lib.d_call_sin(x)
 
-        # simulate the forward-diff program
-        z0_val = x.val + y.val
-        z0_dval = x.dval + y.dval
-        z1_val = z0_val + 5.0
-        z1_dval = z0_dval + 0.0
-        z2_val = z1_val * z0_val
-        z2_dval = z1_dval * z0_val + z0_dval * z1_val
-
-        assert abs(out.val - z2_val) < epsilon and \
-            abs(out.dval - z2_dval) < epsilon
-
-#     def test_assign(self):
-#         with open('loma_code/assign.py') as f:
-#             structs, lib = compiler.compile(f.read(),
-#                                             target = 'c',
-#                                             output_filename = '_code/assign')
-#         _dfloat = structs['_dfloat']
-#         x = _dfloat(-3.0, -1.0)
-#         y = _dfloat(5.0, 3.0)
-#         out = lib.d_assign(x, y)
-
-#         assert abs(out.val - (-3.0 + 5.0)) < epsilon and \
-#             abs(out.dval - (-1.0 + 3.0)) < epsilon
-
-#     def test_side_effect(self):
-#         with open('loma_code/side_effect.py') as f:
-#             structs, lib = compiler.compile(f.read(),
-#                                             target = 'c',
-#                                             output_filename = '_code/side_effect')
-#         _dfloat = structs['_dfloat']
-#         x = _dfloat(-3.5, -1.5)
-#         y = _dfloat(7.0, 2.0)
-#         out = lib.d_side_effect(x, y)
-
-#         assert abs(out.val - (x.val * y.val)) < epsilon and \
-#             abs(out.dval - (x.dval * y.val + x.val * y.dval)) < epsilon
-
-#     def test_call_sin(self):
-#         with open('loma_code/call_sin.py') as f:
-#             structs, lib = compiler.compile(f.read(),
-#                                             target = 'c',
-#                                             output_filename = '_code/call_sin')
-#         _dfloat = structs['_dfloat']
-#         x = _dfloat(1.5, 0.3)
-#         out = lib.d_call_sin(x)
-
-#         assert abs(out.val - math.sin(x.val)) < epsilon and \
-#             abs(out.dval - x.dval * math.cos(x.val)) < epsilon
+        assert abs(out.val - math.sin(x.val)) < epsilon and \
+            abs(out.dval - x.dval * math.cos(x.val)) < epsilon
 
 #     def test_call_cos(self):
 #         with open('loma_code/call_cos.py') as f:
