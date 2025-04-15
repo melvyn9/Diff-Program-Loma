@@ -60,7 +60,7 @@ def forward_diff(diff_func_id : str,
             for stmt in node.body:
                 mutated = self.mutate_stmt(stmt)
                 if isinstance(mutated, list):
-                    new_body.extend(mutated)  # Flatten lists of statements
+                    new_body.extend(mutated)
                 else:
                     new_body.append(mutated)
 
@@ -88,19 +88,19 @@ def forward_diff(diff_func_id : str,
 
         def mutate_declare(self, node):
             # HW1: TODO
-            # Convert the declared type to its differential counterpart (e.g., float -> _dfloat)
+            # Convert the declared type to its differential
             diff_type = autodiff.type_to_diff_type(diff_structs, node.t)
             # Create the declaration without initialization
             declare_stmt = loma_ir.Declare(node.target, diff_type, lineno=node.lineno)
 
-            # If there is no initializer, just return the declaration
+            # If there is no initializer then just return the declaration
             if node.val is None:
                 return declare_stmt
 
             # Mutate the initializer expression
             rhs_val, rhs_dval = self.mutate_expr(node.val)
 
-            # Check if this is a float type (requires dual value assignment)
+            # Check if this is a float type
             is_float = isinstance(node.t, loma_ir.Float)
 
             if is_float:
@@ -117,7 +117,7 @@ def forward_diff(diff_func_id : str,
                 )
                 return [declare_stmt, assign_val, assign_dval]
             else:
-                # For non-float types, only assign the primal value
+                # For non-float types only assign the primal value
                 assign = loma_ir.Assign(
                     loma_ir.Var(node.target),
                     rhs_val,
@@ -158,47 +158,71 @@ def forward_diff(diff_func_id : str,
 
         def mutate_const_int(self, node):
             # HW1: TODO
+            # From lecture
             return (node, loma_ir.ConstFloat(0.0))
             # return super().mutate_const_int(node)
 
         def mutate_var(self, node):
             # HW1: TODO
-            # If the variable is of a differentiable type (Float), extract its dual components.
-            if isinstance(node.t, loma_ir.Float):
+            # If the variable is of a differentiated struct type then dont split.
+            # Check using the "_d"
+            if isinstance(node.t, loma_ir.Struct) and str(node.t).startswith("_d"):
+                # Return the whole variable as the primal and no separate derivative.
+                return (node, None)
+            elif isinstance(node.t, loma_ir.Float):
+                # For differentiable scalars return the .val and .dval
                 return (
                     loma_ir.StructAccess(node, 'val', lineno=node.lineno, t=node.t),
                     loma_ir.StructAccess(node, 'dval', lineno=node.lineno, t=node.t)
                 )
             else:
-                # For non-differentiable types (e.g. Int), just return the variable as-is
-                # and use a constant zero for the derivative.
+                # For other non-differentiable types, return the variable
+                # and set the derivative to 0
                 return (node, loma_ir.ConstFloat(0.0))
             # return super().mutate_var(node)
 
         def mutate_array_access(self, node):
             # HW1: TODO
-            array, _ = self.mutate_expr(node.array)
+            # Mutate the array expression to get its primal value.
+            prim_array, _ = self.mutate_expr(node.array)
+            # Mutate the index expression (we ignore its derivative).
             index, _ = self.mutate_expr(node.index)
+            
+            # Build a new ArrayAccess node using the mutated array and index
+            access = loma_ir.ArrayAccess(prim_array, index, lineno=node.lineno, t=node.t)
+            
+            # If the element type is differentiable, then expect each element of the array
+            # to be a dual number
             if isinstance(node.t, loma_ir.Float):
-                val = loma_ir.StructAccess(loma_ir.ArrayAccess(\
-                    array, index), 'val',
-                    lineno = node.lineno,
-                    t = node.t)
-                dval = loma_ir.StructAccess(loma_ir.ArrayAccess(\
-                    array, index), 'dval',
-                    lineno = node.lineno,
-                    t = node.t)
-                return val, dval
+                # Extract the primal and derivative value from the dual
+                val = loma_ir.StructAccess(access, 'val', lineno=node.lineno, t=node.t)
+                dval = loma_ir.StructAccess(access, 'dval', lineno=node.lineno, t=node.t)
+                return (val, dval)
             else:
-                return loma_ir.ArrayAccess(\
-                    array, index, lineno = node.lineno, t = node.t), None
-
+                # For non-differentiable element types, just return the ArrayAccess as the value
+                # and provide a zero derivative.
+                return (access, loma_ir.ConstFloat(0.0))
             # return super().mutate_array_access(node)
 
         def mutate_struct_access(self, node):
             # HW1: TODO
-            return super().mutate_struct_access(node)
-
+            # Mutate the struct expression
+            struct, _ = self.mutate_expr(node.struct)
+            
+            # If the type of the field is differentiable
+            if isinstance(node.t, loma_ir.Float):
+                # First access the field from the struct; this yields the dual (e.g., _dfloat) stored there.
+                field_dual = loma_ir.StructAccess(struct, node.member_id, lineno=node.lineno, t=node.t)
+                # Extract the primal and derivative value from the dual
+                val = loma_ir.StructAccess(field_dual, 'val', lineno=node.lineno, t=node.t)
+                dval = loma_ir.StructAccess(field_dual, 'dval', lineno=node.lineno, t=node.t)
+                return (val, dval)
+            else:
+                # For non-differentiable fields, just access the field
+                # and assign a constant derivative of 0.
+                val = loma_ir.StructAccess(struct, node.member_id, lineno=node.lineno, t=node.t)
+                return (val, loma_ir.ConstFloat(0.0))
+            
         def mutate_add(self, node):
             # HW1: TODO
             # From lecture
@@ -273,10 +297,9 @@ def forward_diff(diff_func_id : str,
 
         def mutate_call(self, node):
             # HW1: TODO
-            # Grab the arguments
+            # Grab the arguments and follow the formulas provided on HW1 instructions
             new_args = [self.mutate_expr(arg) for arg in node.args]
             if node.id == 'sin':
-                # Expect one argument; new_args[0] is a tuple (val, dval)
                 val, dval = new_args[0]
                 primal = loma_ir.Call('sin', [val], lineno=node.lineno, t=node.t)
                 tangent = loma_ir.BinaryOp(
@@ -379,11 +402,11 @@ def forward_diff(diff_func_id : str,
                 return (primal, tangent)
 
             elif node.id == 'float2int':
-                # float2int(x): typically derivative is ignored. We return derivative 0.
+                # float2int(x): derivative is 0.
                 val, dval = new_args[0]
                 primal = loma_ir.Call('float2int', [val], lineno=node.lineno, t=node.t)
                 tangent = loma_ir.ConstFloat(0.0)
                 return (primal, tangent)
-                    # return super().mutate_call(node)
+                # return super().mutate_call(node)
 
     return FwdDiffMutator().mutate_function_def(func)
