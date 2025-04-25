@@ -222,20 +222,67 @@ def reverse_diff(diff_func_id : str,
     # HW2 happens here. Modify the following IR mutators to perform
     # reverse differentiation.
 
+    # Forward Pass Mutator Helper
+    class FwdPassMutator(irmutator.IRMutator):
+        def mutate_function_def(self, node):
+            self.declare_stmts = []
+            for stmt in node.body:
+                self.mutate_stmt(stmt)
+
+        def mutate_declare(self, node):
+            stmt = loma_ir.Declare('_d' + node.target, node.t)
+            self.declare_stmts.append(stmt)
+
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
         def mutate_function_def(self, node):
             # HW2: TODO
-            return super().mutate_function_def(node)
+            new_args = []
+            # Loop over args
+            for arg in node.args:
+                assert arg.i == loma_ir.In()
+                if arg.i == loma_ir.In():
+                    pass
+                elif arg.i == loma_ir.Out():
+                    pass
+                new_args.append(arg)
+                new_arg_id = '_d' + arg.id
+                new_args.append(loma_ir.Arg(new_arg_id, arg.t, loma_ir.Out()))
+
+            # If return is not None
+            if node.ret_type != None:
+                new_args.append(loma_ir.Arg('_dreturn', node.ret_type, loma_ir.In()))
+
+            # Forward Pass: Copy paste
+            # new_body_fwd = FwdPassMutator().mutate_function_def(node).declare_stmts
+            new_body_fwd = []
+
+            # Reverse Pass
+            new_body_rev = [self.mutate_stmt(stmt) for stmt in reversed(node.body)]
+            new_body_rev = irmutator.flatten(new_body_rev)
+            new_body = new_body_fwd + new_body_rev
+            new_func = loma_ir.FunctionDef(diff_func_id, new_args, new_body, node.is_simd, None)
+
+            return new_func
 
         def mutate_return(self, node):
             # HW2: TODO
-            return super().mutate_return(node)
+            # return super().mutate_return(node)
+            self.adjoint = loma_ir.Var('_dreturn')
+            stmts = self.mutate_expr(node.val)
+            self.adjoint = None
+            return stmts
 
         def mutate_declare(self, node):
             # HW2: TODO
-            return super().mutate_declare(node)
-
+            # return super().mutate_declare(node)
+            if node.val != None:
+                self.adjoint = loma_ir.Var(f'_d{node.target}')
+                stmts = self.mutate_expr(node.val)
+                self.adjoint = None
+                return stmts
+            return []
+             
         def mutate_assign(self, node):
             # HW2: TODO
             return super().mutate_assign(node)
@@ -254,7 +301,8 @@ def reverse_diff(diff_func_id : str,
 
         def mutate_const_float(self, node):
             # HW2: TODO
-            return super().mutate_const_float(node)
+            # return super().mutate_const_float(node)
+            return []
 
         def mutate_const_int(self, node):
             # HW2: TODO
@@ -262,7 +310,11 @@ def reverse_diff(diff_func_id : str,
 
         def mutate_var(self, node):
             # HW2: TODO
-            return super().mutate_var(node)
+            # return super().mutate_var(node)
+            dx = loma_ir.Var('_d' + node.id)
+            rhs = loma_ir.BinaryOp(loma_ir.Add(), dx, self.adjoint)
+            lhs = dx
+            return [loma_ir.Assign(lhs, rhs)]
 
         def mutate_array_access(self, node):
             # HW2: TODO
@@ -274,19 +326,51 @@ def reverse_diff(diff_func_id : str,
 
         def mutate_add(self, node):
             # HW2: TODO
-            return super().mutate_add(node)
+            # return super().mutate_add(node)
+            stmts_left = self.mutate_expr(node.left)
+            stmts_right = self.mutate_expr(node.right)
+            return stmts_left + stmts_right
 
         def mutate_sub(self, node):
             # HW2: TODO
-            return super().mutate_sub(node)
+            # return super().mutate_sub(node)
+            stmts_left = self.mutate_expr(node.left)
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Sub(), loma_ir.ConstFloat(0.0), self.adjoint)
+            stmts_right = self.mutate_expr(node.right)
+            return stmts_left + stmts_right
 
         def mutate_mul(self, node):
             # HW2: TODO
-            return super().mutate_mul(node)
+            # return super().mutate_mul(node)
+
+            old_adjoint = self.adjoint
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Mul(), self.adjoint, node.right)
+            stmts_left = self.mutate_expr(node.left)
+            self.adjoint = old_adjoint
+
+            old_adjoint = self.adjoint
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Mul(), self.adjoint, node.left)
+            stmts_right = self.mutate_expr(node.right)
+            self.adjoint = old_adjoint
+            return stmts_left + stmts_right
 
         def mutate_div(self, node):
             # HW2: TODO
-            return super().mutate_div(node)
+            # return super().mutate_div(node)
+
+            old_adjoint = self.adjoint
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Div(), self.adjoint, node.right)
+            stmts_left = self.mutate_expr(node.left)
+            self.adjoint = old_adjoint
+
+            old_adjoint = self.adjoint
+            negative_dz = loma_ir.BinaryOp(loma_ir.Mul(), self.adjoint, loma_ir.ConstFloat(-1.0))
+            negative_dz_x = loma_ir.BinaryOp(loma_ir.Mul(), negative_dz, node.left)
+            y_2 = loma_ir.BinaryOp(loma_ir.Mul(), node.right, node.right)
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Div(), negative_dz_x, y_2)
+            stmts_right = self.mutate_expr(node.right)
+            self.adjoint = old_adjoint
+            return stmts_left + stmts_right
 
         def mutate_call(self, node):
             # HW2: TODO
