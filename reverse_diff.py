@@ -107,8 +107,10 @@ def reverse_diff(diff_func_id : str,
                 if overwrite:
                     return [loma_ir.Assign(target, deriv)]
                 else:
-                    return [loma_ir.Assign(target,
-                        loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
+                    # For atomic add case
+                    return [loma_ir.CallStmt(
+                                loma_ir.Call('atomic_add', [target, deriv])
+                        )]
             case loma_ir.Struct():
                 s = target.t
                 stmts = []
@@ -254,7 +256,52 @@ def reverse_diff(diff_func_id : str,
             self.var_to_dvar = {}
             self.type_cache_size = {}
             self.type_to_stack_and_ptr_names = {}
+            self.funcs = funcs
+            
+        def mutate_call_stmt(self, node):
+            # For atomic add
+            if node.call.id == "atomic_add":
+                return [node]
 
+            stmts = []
+            primal_def = self.funcs[node.call.id]
+
+            for arg_expr, arg_def in zip(node.call.args, primal_def.args):
+                if arg_def.i == loma_ir.Out():
+                    t = arg_expr.t
+                    # ---------- Skip pointer/unsized arrays entirely ----------
+                    if isinstance(t, loma_ir.Array) and t.static_size is None:
+                        # we don’t cache or stack‑copy this argument at all
+                        continue
+                    # ----------------------------------------------------------
+
+                    t_str = type_to_string(t)
+                    if t_str not in self.type_to_stack_and_ptr_names:
+                        rand = random_id_generator()
+                        stack_name = f"_t_{t_str}_{rand}"
+                        ptr_name   = f"_stack_ptr_{t_str}_{rand}"
+                        self.type_to_stack_and_ptr_names[t_str] = (stack_name, ptr_name)
+                    stack_name, ptr_name = self.type_to_stack_and_ptr_names[t_str]
+
+                    ptr_var   = loma_ir.Var(ptr_name, t=loma_ir.Int())
+                    cache_idx = loma_ir.ArrayAccess(loma_ir.Var(stack_name),
+                                                    ptr_var, t=t)
+
+                    # bookkeeping so reverse pass can pop it
+                    self.cache_vars_list.setdefault(t, []).append((cache_idx, arg_expr))
+                    self.type_cache_size[t] = self.type_cache_size.get(t, 0) + 1
+
+                    stmts += [
+                        loma_ir.Assign(cache_idx, arg_expr),
+                        loma_ir.Assign(ptr_var,
+                                    loma_ir.BinaryOp(loma_ir.Add(),
+                                                        ptr_var,
+                                                        loma_ir.ConstInt(1)))
+                    ]
+            # finally emit the original call
+            stmts.append(node)
+            return stmts
+        
         def mutate_return(self, node):
             return []
 
@@ -315,7 +362,39 @@ def reverse_diff(diff_func_id : str,
     # HW2 happens here. Modify the following IR mutators to perform
     # reverse differentiation.
     class RevDiffMutator(irmutator.IRMutator):
+        # Overload the accum deriv method with atomic add added
+        def _accum_deriv(self, target, deriv, overwrite):
+            match target.t:
+                case loma_ir.Int():
+                    return []
+                case loma_ir.Float():
+                    if overwrite:
+                        return [loma_ir.Assign(target, deriv)]
+                    else:
+                        if getattr(self, "is_simd", False):
+                            # thread‑safe accumulation
+                            return [loma_ir.CallStmt(
+                                        loma_ir.Call("atomic_add", [target, deriv]))]
+                        else:
+                            return [loma_ir.Assign(
+                                        target,
+                                        loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
+                case loma_ir.Struct():
+                    s   = target.t
+                    out = []
+                    for m in s.members:
+                        tgt_m   = loma_ir.StructAccess(target, m.id, t=m.t)
+                        deriv_m = loma_ir.StructAccess(deriv, m.id, t=m.t)
+                        out += self._accum_deriv(tgt_m, deriv_m, overwrite)
+                    return out
+                case _:
+                    assert False
+
         def mutate_function_def(self, node):
+            # HW3 normalize calls
+            node = CallNormalizeMutator().mutate_function_def(node)
+            self.is_simd = node.is_simd
+
             random.seed(hash(node.id))
             # Each input argument is followed by an output (the adjoint)
             # Each output is turned into an input
@@ -432,13 +511,92 @@ def reverse_diff(diff_func_id : str,
                 return stmts
 
         def mutate_ifelse(self, node):
-            # HW3: TODO
-            return super().mutate_ifelse(node)
+            # # HW3: TODO
+            # return super().mutate_ifelse(node)
+            cond = node.cond
+            # HAVE TO RUN ELSE STATEMENTS FIRST. THEN STATEMENTS NEXT
+            else_stmts = [self.mutate_stmt(stmt) for stmt in reversed(node.else_stmts)]
+            new_else_stmts = irmutator.flatten(else_stmts)
+            then_stmts = [self.mutate_stmt(stmt) for stmt in reversed(node.then_stmts)]
+            new_then_stmts = irmutator.flatten(then_stmts)
+            return loma_ir.IfElse(cond, new_then_stmts, new_else_stmts, lineno = node.lineno)
 
         def mutate_call_stmt(self, node):
             # HW3: TODO
-            return super().mutate_call_stmt(node)
+            # return super().mutate_call_stmt(node)
+            # For atomic add
+            if node.call.id == "atomic_add":
+                # second argument is the value that was added in the primal
+                val_expr  = node.call.args[1]
+                # first argument is the variable that received the add
+                out_expr  = node.call.args[0]
 
+                target = var_to_differential(val_expr, self.var_to_dvar)   # dval
+                source = var_to_differential(out_expr, self.var_to_dvar)   # dout
+
+                # no “overwrite” (many lanes may hit the same element)
+                return accum_deriv(target, source, overwrite=False)
+
+            primal_def = funcs[node.call.id]
+            rev_name   = func_to_rev[node.call.id]
+
+            stmts = []
+
+            # 1. pop cached outputs in *reverse* order
+            for arg_expr, arg_def in reversed(list(zip(node.call.args, primal_def.args))):
+                if arg_def.i == loma_ir.Out():
+                    t = arg_expr.t
+                    if isinstance(t, loma_ir.Array) and t.static_size is None:
+                        # we never cached it, so nothing to pop
+                        continue
+
+                if arg_def.i == loma_ir.Out():
+                    t  = arg_expr.t
+                    t_str = type_to_string(t)
+                    _, ptr_name = self.type_to_stack_and_ptr_names[t_str]
+                    ptr_var     = loma_ir.Var(ptr_name, t=loma_ir.Int())
+
+                    # decrement ptr
+                    stmts.append(
+                        loma_ir.Assign(ptr_var,
+                            loma_ir.BinaryOp(loma_ir.Sub(), ptr_var, loma_ir.ConstInt(1)))
+                    )
+                    # restore value
+                    cache_idx, cache_target = self.cache_vars_list[t].pop()
+                    stmts.append(loma_ir.Assign(cache_target, cache_idx))
+
+            # 2. build argument list for _d_rev_func
+            call_args = []
+            for arg_expr, arg_def in zip(node.call.args, primal_def.args):
+                if arg_def.i == loma_ir.In():
+                    call_args += [
+                        arg_expr,
+                        var_to_differential(arg_expr, self.var_to_dvar)  # Out adjoint buf
+                    ]
+                else:  # Out in primal
+                    call_args.append(var_to_differential(arg_expr, self.var_to_dvar))
+
+            # no return value → no _dreturn argument
+
+            stmts.append(
+                loma_ir.CallStmt(
+                    loma_ir.Call(rev_name, call_args, lineno=node.lineno),
+                    lineno=node.lineno
+                )
+            )
+
+            # 3. zero the Out‑parameter adjoints (so earlier code won’t double‑count)
+            for arg_expr, arg_def in zip(node.call.args, primal_def.args):
+                if arg_def.i == loma_ir.Out():
+                    # Skip arrays passed as pointers (static_size is None)
+                    if isinstance(arg_expr.t, loma_ir.Array) and arg_expr.t.static_size is None:
+                        continue
+                    stmts += assign_zero(
+                        var_to_differential(arg_expr, self.var_to_dvar)
+                    )
+
+            return stmts
+        
         def mutate_while(self, node):
             # HW3: TODO
             return super().mutate_while(node)
@@ -450,12 +608,12 @@ def reverse_diff(diff_func_id : str,
                 self.adj_declaration.append(loma_ir.Declare(target, t=node.t))
                 target_expr = loma_ir.Var(target, t=node.t)
                 self.adj_accum_stmts += \
-                    accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self._accum_deriv(var_to_differential(node, self.var_to_dvar),
                         target_expr, overwrite = False)
-                return [accum_deriv(target_expr, self.adj, overwrite = True)]
+                return self._accum_deriv(target_expr, self.adj, overwrite = True)
             else:
-                return [accum_deriv(var_to_differential(node, self.var_to_dvar),
-                    self.adj, overwrite = False)]
+                return self._accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self.adj, overwrite = False)
 
         def mutate_const_float(self, node):
             return []
@@ -470,12 +628,12 @@ def reverse_diff(diff_func_id : str,
                 self.adj_declaration.append(loma_ir.Declare(target, t=node.t))
                 target_expr = loma_ir.Var(target, t=node.t)
                 self.adj_accum_stmts += \
-                    accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self._accum_deriv(var_to_differential(node, self.var_to_dvar),
                         target_expr, overwrite = False)
-                return [accum_deriv(target_expr, self.adj, overwrite = True)]
+                return self._accum_deriv(target_expr, self.adj, overwrite = True)
             else:
-                return [accum_deriv(var_to_differential(node, self.var_to_dvar),
-                    self.adj, overwrite = False)]
+                return self._accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self.adj, overwrite = False)
 
         def mutate_struct_access(self, node):
             if self.in_assign:
@@ -484,12 +642,12 @@ def reverse_diff(diff_func_id : str,
                 self.adj_declaration.append(loma_ir.Declare(target, t=node.t))
                 target_expr = loma_ir.Var(target, t=node.t)
                 self.adj_accum_stmts += \
-                    accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self._accum_deriv(var_to_differential(node, self.var_to_dvar),
                         target_expr, overwrite = False)
-                return [accum_deriv(target_expr, self.adj, overwrite = True)]
+                return self._accum_deriv(target_expr, self.adj, overwrite = True)
             else:
-                return [accum_deriv(var_to_differential(node, self.var_to_dvar),
-                    self.adj, overwrite = False)]
+                return self._accum_deriv(var_to_differential(node, self.var_to_dvar),
+                    self.adj, overwrite = False)
 
         def mutate_add(self, node):
             left = self.mutate_expr(node.left)
@@ -678,8 +836,35 @@ def reverse_diff(diff_func_id : str,
                 case 'float2int':
                     # don't propagate the derivatives
                     return []
+                case 'atomic_add':
+                    # For atomic add
+                    source = var_to_differential(node.args[0], self.var_to_dvar)  # dz
+                    target = var_to_differential(node.args[1], self.var_to_dvar)  # d x[i]
+                    return accum_deriv(target, source, overwrite=False)
                 case _:
                     # HW3: TODO
-                    assert False
+                    # --- HW3: general function‐call in reverse mode ---
+                    # --- generic user function call in reverse mode ---
+                    rev_id   = func_to_rev[node.id]          # e.g. _d_foo
+                    orig_def = funcs[node.id]                # primal signature
+
+                    call_args = []
+                    # node.args and orig_def.args line up position‑wise
+                    for arg_val, arg_def in zip(node.args, orig_def.args):
+                        if arg_def.i == loma_ir.In():
+                            # pass the primal value
+                            call_args.append(arg_val)
+                            # plus its adjoint buffer (Out)
+                            call_args.append(var_to_differential(arg_val, self.var_to_dvar))
+                        else:  # Out param in the primal becomes an In adjoint here
+                            call_args.append(var_to_differential(arg_val, self.var_to_dvar))
+
+                    # final argument: the adjoint flowing INTO this call‑expression
+                    call_args.append(self.adj)
+
+                    # propagate gradients by calling the reverse‑mode sub‑routine
+                    return [loma_ir.CallStmt(
+                                loma_ir.Call(rev_id, call_args, lineno=node.lineno),
+                                lineno=node.lineno)]
 
     return RevDiffMutator().mutate_function_def(func)

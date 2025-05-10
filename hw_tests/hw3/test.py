@@ -327,6 +327,8 @@ class Homework3Test(unittest.TestCase):
                                         math.cos(math.sin(x.val)) * \
                                         math.cos(x.val)) < epsilon
 
+# ----------------------------------- Good Until Here -----------------------------------------
+# ----------------------------------- Problem with Loops Here -----------------------------------------
     def test_while_loop_rev(self):
         with open('loma_code/while_loop_rev.py') as f:
             structs, lib = compiler.compile(f.read(),
@@ -382,7 +384,8 @@ class Homework3Test(unittest.TestCase):
         # out = x + n^3 * x^2
         # dx = dout * (1 + 2 * x * n^3))
         assert abs(_dx.value - dout * (1 + 2 * x * n * n * n)) < epsilon
-
+# ----------------------------------- Problem Until Here -----------------------------------------
+   
     def test_parallel_copy(self):
         with open('loma_code/parallel_copy.py') as f:
             structs, lib = compiler.compile(f.read(),
