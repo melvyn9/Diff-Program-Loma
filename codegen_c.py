@@ -279,3 +279,34 @@ def codegen_c(structs : dict[str, loma_ir.Struct],
         cg.visit_function(f)
         code += cg.code
     return code
+
+# -------------------------------- START OF PROJECT ----------------------------------------------
+def generate_mpi_main(func_name: str, arg_type='float') -> str:
+    return f"""#include <mpi.h>
+#include <stdio.h>
+
+extern void {func_name}({arg_type} x, {arg_type} dx, {arg_type}* dy);
+
+int main(int argc, char** argv) {{
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    {arg_type} x = 1.0f + rank;
+    {arg_type} dx = 1.0f;
+    {arg_type} dy = 0.0f;
+
+    {func_name}(x, dx, &dy);
+
+    {arg_type} total_dy = 0.0f;
+    MPI_Allreduce(&dy, &total_dy, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+
+    if (rank == 0) {{
+        printf("Global gradient: %f\\n", total_dy);
+    }}
+
+    MPI_Finalize();
+    return 0;
+}}
+"""

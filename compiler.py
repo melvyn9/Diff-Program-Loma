@@ -271,4 +271,18 @@ static float cl_atomic_add(volatile __global float *p, float val) {
             c_func.argtypes = argtypes
             c_func.restype = loma_to_ctypes_type(f.ret_type, ctypes_structs)
 
+    # ------------------------------ START OF FINAL PROJECT -------------------------------------------
+    # If forward-mode differentiation, generate an MPI-compatible main()
+    from codegen_c import generate_mpi_main
+
+    # We'll assume there's only one differentiated function
+    # Get the first function name from the funcs dictionary
+    func_name = list(funcs.keys())[0]
+
+    # Generate MPI main source code and write it to mpi_main.c
+    mpi_main_code = generate_mpi_main(func_name)
+
+    with open("mpi_main.c", "w") as f:
+        f.write(mpi_main_code)
+
     return ctypes_structs, lib
