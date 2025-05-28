@@ -43,6 +43,9 @@ def forward_diff(diff_func_id : str,
         func_to_fwd - mapping from primal function ID to its forward differentiation
     """
 
+    # HW1 happens here. Modify the following IR mutators to perform
+    # forward differentiation.
+
     # Apply the differentiation.
     class FwdDiffMutator(irmutator.IRMutator):
         def mutate_function_def(self, node):
@@ -119,26 +122,40 @@ def forward_diff(diff_func_id : str,
                 return loma_ir.Assign(tgt_val, val)
 
         def mutate_ifelse(self, node):
-            cond_val, _ = self.mutate_expr(node.cond)
-            then_stmts = [self.mutate_stmt(stmt) for stmt in node.then_stmts]
-            then_stmts = irmutator.flatten(then_stmts)
-            else_stmts = [self.mutate_stmt(stmt) for stmt in node.else_stmts]
-            else_stmts = irmutator.flatten(else_stmts)
-            return loma_ir.IfElse(cond_val, then_stmts, else_stmts)
+            # # HW3: TODO
+            # return super().mutate_ifelse(node)
+            new_cond, _ = self.mutate_expr(node.cond)
+            new_then_stmts = [self.mutate_stmt(stmt) for stmt in node.then_stmts]
+            new_else_stmts = [self.mutate_stmt(stmt) for stmt in node.else_stmts]
+            # Important: mutate_stmt can return a list of statements. We need to flatten the lists.
+            new_then_stmts = irmutator.flatten(new_then_stmts)
+            new_else_stmts = irmutator.flatten(new_else_stmts)
+            return loma_ir.IfElse(\
+                new_cond,
+                new_then_stmts,
+                new_else_stmts,
+                lineno = node.lineno)
 
         def mutate_while(self, node):
-            cond_val, _ = self.mutate_expr(node.cond)
-            body = [self.mutate_stmt(stmt) for stmt in node.body]
-            return loma_ir.While(cond_val, node.max_iter, body)
-
+            # HW3: TODO
+            # return super().mutate_while(node)
+            # differentiate the loop condition
+            new_cond, _ = self.mutate_expr(node.cond)
+            # differentiate every statement in the body
+            new_body = [self.mutate_stmt(stmt) for stmt in node.body]
+            new_body = irmutator.flatten(new_body)
+            # loma_ir.While signature: While(cond, body, max_iter, lineno)
+            return loma_ir.While(new_cond, node.max_iter, new_body, lineno=node.lineno)
+        
         def mutate_call_stmt(self, node):
-            val, dval = self.mutate_expr(node.call)
-            if isinstance(val.t, loma_ir.Float):
-                return loma_ir.CallStmt(loma_ir.Call('make__dfloat',
-                    [val, dval], lineno = node.lineno))
+            # mutate_expr will call mutate_call and return (expr, dval)
+            expr, dval = self.mutate_expr(node.call)
+            # when encounter output argument, just switch to original
+            if isinstance(expr.t, loma_ir.Float):
+                return loma_ir.CallStmt(loma_ir.Call('make__dfloat', [expr, dval], lineno = node.lineno))
             else:
-                return loma_ir.CallStmt(val)
-
+                return loma_ir.CallStmt(expr)
+            
         def mutate_const_float(self, node):
             return node, loma_ir.ConstFloat(0.0)
 
@@ -147,8 +164,8 @@ def forward_diff(diff_func_id : str,
 
         def mutate_var(self, node):
             if isinstance(node.t, loma_ir.Float):
-                return (loma_ir.StructAccess(loma_ir.Var(node.id), 'val', t=node.t),
-                    loma_ir.StructAccess(loma_ir.Var(node.id), 'dval', t=node.t))
+                return (loma_ir.StructAccess(loma_ir.Var(node.id), 'val'),
+                    loma_ir.StructAccess(loma_ir.Var(node.id), 'dval'))
             else:
                 return node, None
 
@@ -299,72 +316,6 @@ def forward_diff(diff_func_id : str,
                     lineno = node.lineno,
                     t = node.t)
             return val, dval
-
-        def mutate_less(self, node):
-            l_val, _ = self.mutate_expr(node.left)
-            r_val, _ = self.mutate_expr(node.right)
-            return loma_ir.BinaryOp(\
-                loma_ir.Less(),
-                l_val,
-                r_val,
-                lineno = node.lineno,
-                t = node.t), None
-
-        def mutate_less_equal(self, node):
-            l_val, _ = self.mutate_expr(node.left)
-            r_val, _ = self.mutate_expr(node.right)
-            return loma_ir.BinaryOp(\
-                loma_ir.LessEqual(),
-                l_val,
-                r_val,
-                lineno = node.lineno,
-                t = node.t), None
-
-        def mutate_greater(self, node):
-            l_val, _ = self.mutate_expr(node.left)
-            r_val, _ = self.mutate_expr(node.right)
-            return loma_ir.BinaryOp(\
-                loma_ir.Greater(),
-                l_val,
-                r_val,
-                lineno = node.lineno,
-                t = node.t), None
-
-        def mutate_greater_equal(self, node):
-            l_val, _ = self.mutate_expr(node.left)
-            r_val, _ = self.mutate_expr(node.right)
-            return loma_ir.BinaryOp(\
-                loma_ir.GreaterEqual(),
-                l_val,
-                r_val,
-                lineno = node.lineno,
-                t = node.t), None
-
-        def mutate_equal(self, node):
-            l_val, _ = self.mutate_expr(node.left)
-            r_val, _ = self.mutate_expr(node.right)
-            return loma_ir.BinaryOp(\
-                loma_ir.Equal(),
-                l_val,
-                r_val,
-                lineno = node.lineno,
-                t = node.t), None
-
-        def mutate_and(self, node):
-            return loma_ir.BinaryOp(\
-                loma_ir.And(),
-                self.mutate_expr(node.left),
-                self.mutate_expr(node.right),
-                lineno = node.lineno,
-                t = node.t)
-
-        def mutate_or(self, node):
-            return loma_ir.BinaryOp(\
-                loma_ir.Or(),
-                self.mutate_expr(node.left),
-                self.mutate_expr(node.right),
-                lineno = node.lineno,
-                t = node.t)
 
         def mutate_call(self, node):
             new_args = [self.mutate_expr(arg) for arg in node.args]
@@ -527,37 +478,40 @@ def forward_diff(diff_func_id : str,
                         lineno = node.lineno,
                         t = node.t)
                     return ret, None
-                case _: # user function
-                    # the forward diff function takes
-                    # the differential types, we need to
-                    # assemble them properly
-                    combined_args = []
-                    f = funcs[node.id]
-                    for i, f_arg in enumerate(f.args):
-                        if f_arg.i == loma_ir.Out():
-                            combined_args.append(node.args[i])
-                        else:
-                            val, dval = new_args[i]
-                            if dval is not None:
-                                combined_args.append(loma_ir.Call('make__dfloat',
-                                    [val, dval], lineno = node.lineno))
-                            else:
-                                combined_args.append(val)
-                    diff_ret_type = autodiff.type_to_diff_type(diff_structs, node.t)
-                    ret = loma_ir.Call(\
-                        func_to_fwd[node.id],
-                        combined_args,
-                        lineno = node.lineno,
-                        t = diff_ret_type)
-                    if isinstance(node.t, loma_ir.Float):
-                        val = loma_ir.StructAccess(ret, 'val',
-                            lineno = node.lineno,
-                            t = node.t)
-                        dval = loma_ir.StructAccess(ret, 'dval',
-                            lineno = node.lineno,
-                            t = node.t)
+                # Function Forward HW3
+                case _:
+                    dfloat_new_args = []
+                    for new_arg in new_args:
+                        dfloat_new_args.append(loma_ir.Call('make__dfloat', [new_arg[0], new_arg[1]]))
+                    fwd_func_id = func_to_fwd[node.id]
+                    if node.t == loma_ir.Float():
+                        val = loma_ir.StructAccess(loma_ir.Call(fwd_func_id, dfloat_new_args), "val")
+                        dval = loma_ir.StructAccess(loma_ir.Call(fwd_func_id, dfloat_new_args), "dval")
                         return val, dval
                     else:
-                        return ret, None
+                        return loma_ir.Call(fwd_func_id, dfloat_new_args), None
+
+        def mutate_greater(self, node):
+            left, _ = self.mutate_expr(node.left)
+            right, _ = self.mutate_expr(node.right)
+            return loma_ir.BinaryOp(\
+                loma_ir.Greater(),
+                left,
+                right,
+                lineno = node.lineno,
+                t = node.t), None
+        
+        def mutate_less(self, node):
+            # differentiate both operands but keep only their primal values
+            left_val,  _ = self.mutate_expr(node.left)
+            right_val, _ = self.mutate_expr(node.right)
+
+            return loma_ir.BinaryOp(
+                loma_ir.Less(),          # the "<" operator
+                left_val,
+                right_val,
+                lineno=node.lineno,
+                t=node.t           # Boolean/int type as in the original IR
+            ), None                # comparison has no derivative
 
     return FwdDiffMutator().mutate_function_def(func)
