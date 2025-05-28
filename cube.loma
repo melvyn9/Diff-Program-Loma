@@ -1,0 +1,6 @@
+from loma import In, fwd_diff
+
+def cube(x: In[float]) -> float:
+    return x * x * x
+
+d_cube = fwd_diff(cube)

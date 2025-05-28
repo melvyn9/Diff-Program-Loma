@@ -4,14 +4,14 @@ typedef struct {
 	float val;
 	float dval;
 } _dfloat;
-float square(float x);
-_dfloat d_square(_dfloat x);
+float cube(float x);
+_dfloat d_cube(_dfloat x);
 _dfloat make__dfloat(float val, float dval);
-float square(float x) {
-	return (x) * (x);
+float cube(float x) {
+	return ((x) * (x)) * (x);
 }
-_dfloat d_square(_dfloat x) {
-	return make__dfloat(((x).val) * ((x).val),(((x).dval) * ((x).val)) + (((x).val) * ((x).dval)));
+_dfloat d_cube(_dfloat x) {
+	return make__dfloat((((x).val) * ((x).val)) * ((x).val),(((((x).dval) * ((x).val)) + (((x).val) * ((x).dval))) * ((x).val)) + ((((x).val) * ((x).val)) * ((x).dval)));
 }
 _dfloat make__dfloat(float val, float dval) {
 	_dfloat ret;

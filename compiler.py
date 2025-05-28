@@ -282,8 +282,7 @@ static float cl_atomic_add(volatile __global float *p, float val) {
     # We'll assume there's only one differentiated function
     # Get the first function name from the funcs dictionary
     # pick the first ForwardDiff / *_d_fwd_* function
-    func_name = next(name for name in funcs
-                 if name.startswith("d_") and not name.startswith("_"))
+    func_name = "d_cube"
     # Generate MPI main source code and write it to mpi_main.c
     mpi_main_code = generate_mpi_main(func_name)
 
