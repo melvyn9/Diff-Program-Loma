@@ -121,13 +121,17 @@ def compile(loma_code : str,
     # Generate and compile the code
     if target == 'c':
         code = codegen_c.codegen_c(structs, funcs)
-        # add standard headers
-        code = """
-#include <math.h>
-        \n""" + code
 
+        # Add math header first
+        full_code = "#include <math.h>\n\n" + code
+
+        # Save it to d_func.c
+        with open("d_func.c", "w") as f:
+            f.write(full_code)
+
+        # Print and also use for compiler input
         print('Generated C code:')
-        print(code)
+        print(full_code)
 
         if platform.system() == 'Windows':
             tmp_c_filename = f'_tmp.c'
@@ -277,8 +281,9 @@ static float cl_atomic_add(volatile __global float *p, float val) {
 
     # We'll assume there's only one differentiated function
     # Get the first function name from the funcs dictionary
-    func_name = list(funcs.keys())[0]
-
+    # pick the first ForwardDiff / *_d_fwd_* function
+    func_name = next(name for name in funcs
+                 if name.startswith("d_") and not name.startswith("_"))
     # Generate MPI main source code and write it to mpi_main.c
     mpi_main_code = generate_mpi_main(func_name)
 
@@ -286,3 +291,24 @@ static float cl_atomic_add(volatile __global float *p, float val) {
         f.write(mpi_main_code)
 
     return ctypes_structs, lib
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("filename")
+    parser.add_argument("--target", choices=["c", "ispc", "opencl"], default="c")
+    parser.add_argument("--out", default=None)
+    parser.add_argument("--diff_mode", choices=["fwd", "rev"], default=None)
+
+    args = parser.parse_args()
+    with open(args.filename, "r") as f:
+        src = f.read()
+
+    import compiler  # ✅ Add this if not already present
+
+    if args.diff_mode is not None:
+        import autodiff
+        autodiff.set_diff_mode(args.diff_mode)  # ✅ Add this line to update global AD mode
+
+    compiler.compile(src, target=args.target, output_filename=args.out)

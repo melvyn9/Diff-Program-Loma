@@ -1,3 +1,6 @@
-float square(float x) {
-  return x * x;
-}
+from loma import In, Out, fwd_diff
+
+def square(x: In[float]) -> float:
+    return x * x
+
+d_square = fwd_diff(square)

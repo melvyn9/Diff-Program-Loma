@@ -6,6 +6,13 @@ import forward_diff
 import reverse_diff
 import irvisitor
 
+diff_mode = 'fwd'  # default mode
+
+def set_diff_mode(mode):
+    global diff_mode
+    assert mode in ['fwd', 'rev']
+    diff_mode = mode
+
 def type_to_diff_type(diff_structs : dict[str, loma_ir.Struct],
                       t : loma_ir.type) -> loma_ir.type:
     """ Given a loma type t, look up diff_structs for the differential type.
