@@ -5,6 +5,7 @@ import irmutator
 import forward_diff
 import reverse_diff
 import irvisitor
+import attrs
 
 diff_mode = 'fwd'  # default mode
 
@@ -303,12 +304,19 @@ def differentiate(structs : dict[str, loma_ir.Struct],
                 visited_func.add(f)
                 func_stack.append(f)
 
-    for f in funcs.values():
+    for f in list(funcs.values()):
         if isinstance(f, loma_ir.ForwardDiff):
-            fwd_diff_func = forward_diff.forward_diff(\
+            fwd_diff_func = forward_diff.forward_diff(
                 f.id, structs, funcs, diff_structs,
                 funcs[f.primal_func], func_to_fwd)
+
+            # keep the generated function under its own name
             funcs[f.id] = fwd_diff_func
+
+            # ── first forward-mode func also gets aliased to d_user_func ──
+            if "d_user_func" not in funcs:
+                alias = attrs.evolve(fwd_diff_func, id="d_user_func")
+                funcs["d_user_func"] = alias
             import pretty_print
             print(f'\nForward differentiation of function {f.id}:')
             print(pretty_print.loma_to_str(fwd_diff_func))
@@ -317,7 +325,13 @@ def differentiate(structs : dict[str, loma_ir.Struct],
                 f.id, structs, funcs, diff_structs,
                 funcs[f.primal_func], func_to_rev)
             funcs[f.id] = rev_diff_func
+
+            # ── first reverse-mode func also gets aliased to d_user_func ──
+            if "d_user_func" not in funcs:
+                alias = attrs.evolve(rev_diff_func, id="d_user_func")
+                funcs["d_user_func"] = alias
             import pretty_print
+            
             print(f'\nReverse differentiation of function {f.id}:')
             print(pretty_print.loma_to_str(rev_diff_func))
 

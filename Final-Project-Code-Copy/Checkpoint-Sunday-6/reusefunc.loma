@@ -1,0 +1,6 @@
+def reusefunc(x: In[float]) -> float:
+    u: float = x + sin(x)
+    return u * u
+
+# d_reusefunc = fwd_diff(reusefunc)
+d_reusefunc = rev_diff(reusefunc)

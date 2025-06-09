@@ -276,27 +276,18 @@ static float cl_atomic_add(volatile __global float *p, float val) {
             c_func.restype = loma_to_ctypes_type(f.ret_type, ctypes_structs)
 
     # ------------------------------ START OF FINAL PROJECT -------------------------------------------
+    # If forward-mode differentiation, generate an MPI-compatible main()
     from codegen_c import generate_mpi_main
 
-    # find the one true user function (exclude d_*, make__dfloat)
-    primal_funcs = [
-        f for f in funcs.values()
-        if isinstance(f, loma_ir.FunctionDef)
-           and not f.id.startswith('d_')
-           and f.id != 'make__dfloat'
-    ]
-    if len(primal_funcs) != 1:
-        raise RuntimeError(f"Expected exactly one primal function, got: {[f.id for f in primal_funcs]}")
-    primal_func = primal_funcs[0]
-    arg_names = [arg.id for arg in primal_func.args]
-
-    # **grab the mode** that was set earlier
+    # autodiff.set_diff_mode() was called earlier in __main__,
+    # so autodiff.diff_mode holds "fwd" or "rev"
     dm = autodiff.diff_mode
 
-    # generate and write the correct mpi_main.c
-    mpi_main_code = generate_mpi_main(dm, arg_names)
+    # generate the correct driver
+    mpi_main_code = generate_mpi_main(dm)
     with open("mpi_main.c", "w") as f:
         f.write(mpi_main_code)
+
 
     return ctypes_structs, lib
 

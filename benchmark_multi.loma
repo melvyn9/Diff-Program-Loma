@@ -1,0 +1,4 @@
+def benchmark(x: In[float], y: In[float]) -> float:
+    return x*sin(y) + log(x)*y
+
+d_benchmark = fwd_diff(benchmark)  # or rev_diff(benchmark)

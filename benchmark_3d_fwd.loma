@@ -1,0 +1,8 @@
+# benchmark_3d_fwd.loma
+
+def benchmark3(x: In[float], y: In[float], z: In[float]) -> float:
+    # example: x·y + sin(y·z) + log(x+z)
+    return x * y + sin(y * z) + log(x + z)
+
+# Tell Loma to generate the forward‐mode derivative:
+d_benchmark3 = fwd_diff(benchmark3)

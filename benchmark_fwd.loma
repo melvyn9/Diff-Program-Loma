@@ -1,0 +1,5 @@
+def benchmark(x: In[float]) -> float:
+    return (x * sin(x)) + log(x)
+
+# Tell Loma: create forward‐mode AD
+d_benchmark = fwd_diff(benchmark)

@@ -1,0 +1,10 @@
+def benchmark(x: In[float]) -> float:
+    return (x * sin(x)) + log(x)
+
+@fwd_diff
+def d_benchmark(x: Diff[float]) -> float:
+    return benchmark(x)
+
+@reverse
+def d_benchmark(x: In[float], dx: Out[float], dout: In[float]) -> void:
+    return 0

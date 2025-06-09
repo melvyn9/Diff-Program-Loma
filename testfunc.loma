@@ -1,0 +1,8 @@
+def testfunc(x: In[float]) -> float:
+    return x * sin(x) + log(x)
+
+# For forward mode:
+d_testfunc = fwd_diff(testfunc)
+
+# Or for reverse mode:
+# d_testfunc = rev_diff(testfunc)

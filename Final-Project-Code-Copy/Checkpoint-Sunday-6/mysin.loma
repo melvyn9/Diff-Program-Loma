@@ -1,0 +1,7 @@
+# primal function: annotate its input as In[float]
+def mysin(x: In[float]) -> float:
+    return sin(x)
+
+# tell Loma to build a reverse‐mode derivative of mysin,
+# and bind it to d_mysin
+d_mysin = rev_diff(mysin)

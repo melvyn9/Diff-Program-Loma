@@ -1,0 +1,7 @@
+from loma import In, fwd_diff
+from math import sin
+
+def mysin(x: In[float]) -> float:
+    return sin(x)
+
+d_mysin = fwd_diff(mysin)

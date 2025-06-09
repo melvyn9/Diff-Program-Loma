@@ -281,107 +281,59 @@ def codegen_c(structs : dict[str, loma_ir.Struct],
     return code
 
 # -------------------------------- START OF PROJECT ----------------------------------------------
-def generate_mpi_main(diff_mode: str, arg_names: list[str]) -> str:
-    n = len(arg_names)
-    lines: list[str] = []
+def generate_mpi_main(diff_mode: str) -> str:
+    if diff_mode == 'fwd':
+        return r"""
+#include <mpi.h>
+#include <stdio.h>
 
-    # 1) Common includes & name‐table
-    lines += [
-        "#include <mpi.h>",
-        "#include <stdio.h>",
-        "#include <math.h>",
-        "",
-        f"// auto-generated for {n} inputs",
-        "static const char* arg_names[] = { " +
-            ", ".join(f"\"{nm}\"" for nm in arg_names) +
-        " };",
-        ""
-    ]
+typedef struct { float val; float dval; } _dfloat;
+extern _dfloat d_user_func(_dfloat x);
 
-    if diff_mode == "fwd":
-        # 2a) Forward‐mode driver
-        lines += [
-            "// Forward‐mode AD entry point",
-            "typedef struct { float val, dval; } _dfloat;",
-            "extern _dfloat d_user_func(" +
-                ", ".join(f"_dfloat {nm}" for nm in arg_names) +
-            ");",
-            "",
-            "int main(int argc, char** argv) {",
-            "    MPI_Init(&argc, &argv);",
-            "    int rank, size;",
-            "    MPI_Comm_rank(MPI_COMM_WORLD, &rank);",
-            "    MPI_Comm_size(MPI_COMM_WORLD, &size);",
-            ""
-        ]
-        # declare one _dfloat per input
-        for i, nm in enumerate(arg_names):
-            lines.append(
-                f"    _dfloat in_{nm} = {{ .val = 1.0f + rank + {i}, .dval = 0.0f }};"
-            )
-        lines += [
-            "    _dfloat out;",
-            "",
-            "    // run one forward sweep per input dimension",
-            "    MPI_Barrier(MPI_COMM_WORLD);",
-            f"    for (int seed = 0; seed < {n}; ++seed) {{"
-        ]
-        # zero & seed each
-        for nm in arg_names:
-            lines.append(f"        in_{nm}.dval = 0.0f;")
-        for i, nm in enumerate(arg_names):
-            lines.append(f"        if (seed == {i}) in_{nm}.dval = 1.0f;")
-        # call & print
-        call_args = ", ".join(f"in_{nm}" for nm in arg_names)
-        lines += [
-            f"        out = d_user_func({call_args});",
-            "        printf(\"Rank %d: f=%.6f, df/d%s=%.6f\\n\",",
-            "               rank, out.val, arg_names[seed], out.dval);",
-            "    }",
-            "",
-            "    MPI_Finalize();",
-            "    return 0;",
-            "}"
-        ]
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    else:
-        # 2b) Reverse‐mode driver
-        sig_in  = ", ".join(f"float {nm}"     for nm in arg_names)
-        sig_out = ", ".join(f"float* d{nm}"    for nm in arg_names)
-        lines += [
-            "// Reverse‐mode AD entry point",
-            f"extern void d_user_func({sig_in}, {sig_out}, float dout);",
-            "",
-            "int main(int argc, char** argv) {",
-            "    MPI_Init(&argc, &argv);",
-            "    int rank, size;",
-            "    MPI_Comm_rank(MPI_COMM_WORLD, &rank);",
-            "    MPI_Comm_size(MPI_COMM_WORLD, &size);",
-            ""
-        ]
-        # declare x, y, dx, dy, ...
-        for i, nm in enumerate(arg_names):
-            lines.append(f"    float {nm} = 1.0f + rank + {i};")
-            lines.append(f"    float d{nm} = 0.0f;")
-        lines += [
-            "    float dout = 1.0f;",
-            "",
-            "    // single reverse sweep",
-            "    MPI_Barrier(MPI_COMM_WORLD);",
-            "    d_user_func(" +
-                ", ".join(arg_names + [f"&d{nm}" for nm in arg_names] + ["dout"]) +
-            ");",
-            ""
-        ]
-        # print all partials
-        fmt = " ".join(f"df/d{nm}=%.6f" for nm in arg_names)
-        vals = ", ".join(f"d{nm}" for nm in arg_names)
-        lines += [
-            f"    printf(\"Rank %d: {fmt}\\n\", rank, {vals});",
-            "",
-            "    MPI_Finalize();",
-            "    return 0;",
-            "}"
-        ]
+    _dfloat in = { .val = 1.0f + rank, .dval = 1.0f };
+    printf("Rank %d: x=%.2f dx=%.2f\n", rank, in.val, in.dval);
+    _dfloat out = d_user_func(in);
+    printf("Rank %d: dy=%.6f\n", rank, out.dval);
 
-    return "\n".join(lines)
+    float total = 0.0f;
+    MPI_Allreduce(&out.dval, &total, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    if (rank == 0) printf("Global gradient: %.6f\n", total);
+
+    MPI_Finalize();
+    return 0;
+}
+"""
+    else:  # reverse mode
+        return r"""
+#include <mpi.h>
+#include <stdio.h>
+
+// reverse-mode AD entry point
+extern void d_user_func(float x, float* dx, float dout);
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    float x = 1.0f + rank;
+    float grad = 0.0f;
+    printf("Rank %d: x=%.2f seed=1.00\n", rank, x);
+    d_user_func(x, &grad, 1.0f);
+    printf("Rank %d: dy=%.6f\n", rank, grad);
+
+    float total = 0.0f;
+    MPI_Allreduce(&grad, &total, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    if (rank == 0) printf("Global gradient: %.6f\n", total);
+
+    MPI_Finalize();
+    return 0;
+}
+"""
